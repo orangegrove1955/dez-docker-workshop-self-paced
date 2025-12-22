@@ -1,20 +1,9 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[1]:
-
-
 import pandas as pd
-
-
-# In[42]:
-
-
-prefix = 'https://github.com/DataTalksClub/nyc-tlc-data/releases/download/yellow/'
-
-
-# In[44]:
-
+from sqlalchemy import create_engine
+from tqdm.auto import tqdm
 
 dtype = {
     "VendorID": "Int64",
@@ -40,55 +29,71 @@ parse_dates = [
     "tpep_dropoff_datetime"
 ]
 
-df = pd.read_csv(
-    prefix + '/yellow_tripdata_2021-01.csv.gz',
-    dtype=dtype,
-    parse_dates=parse_dates
-)
 
+def ingest_data(
+        url: str,
+        engine,
+        target_table: str,
+        chunksize: int = 100000,
+) -> pd.DataFrame:
+    df_iter = pd.read_csv(
+        url,
+        dtype=dtype,
+        parse_dates=parse_dates,
+        iterator=True,
+        chunksize=chunksize
+    )
 
-# In[45]:
+    first_chunk = next(df_iter)
 
+    first_chunk.head(0).to_sql(
+        name=target_table,
+        con=engine,
+        if_exists="replace"
+    )
 
-df.head()
+    print(f"Table {target_table} created")
 
+    first_chunk.to_sql(
+        name=target_table,
+        con=engine,
+        if_exists="append"
+    )
 
-# In[53]:
+    print(f"Inserted first chunk: {len(first_chunk)}")
 
+    for df_chunk in tqdm(df_iter):
+        df_chunk.to_sql(
+            name=target_table,
+            con=engine,
+            if_exists="append"
+        )
+        print(f"Inserted chunk: {len(df_chunk)}")
 
-from sqlalchemy import create_engine
-engine = create_engine('postgresql://root:root@localhost:5432/ny_taxi')
+    print(f'done ingesting to {target_table}')
 
+def main():
+    pg_user = 'root'
+    pg_pass = 'root'
+    pg_host = 'localhost'
+    pg_port = '5432'
+    pg_db = 'ny_taxi'
+    year = 2021
+    month = 1
+    chunksize = 100000
+    target_table = 'yellow_taxi_data'
 
-# In[55]:
+    engine = create_engine(f'postgresql://{pg_user}:{pg_pass}@{pg_host}:{pg_port}/{pg_db}')
+    url_prefix = 'https://github.com/DataTalksClub/nyc-tlc-data/releases/download/yellow'
 
+    url = f'{url_prefix}/yellow_tripdata_{year:04d}-{month:02d}.csv.gz'
 
-df.head(n=0).to_sql(name='yellow_taxi_data', con=engine, if_exists='replace')
+    ingest_data(
+        url=url,
+        engine=engine,
+        target_table=target_table,
+        chunksize=chunksize
+    )
 
-
-# In[78]:
-
-
-df_iter = pd.read_csv(
-    prefix + '/yellow_tripdata_2021-01.csv.gz',
-    dtype=dtype,
-    parse_dates=parse_dates,
-    iterator=True,
-    chunksize=100000,
-)
-
-
-# In[79]:
-
-
-from tqdm.auto import tqdm
-
-for df_chunk in tqdm(df_iter):
-    df_chunk.to_sql(name='yellow_taxi_data', con=engine, if_exists='append')
-
-
-# In[ ]:
-
-
-
-
+if __name__ == '__main__':
+    main()
